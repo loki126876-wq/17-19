@@ -1,1 +1,12 @@
-
+{
+    "telegram_bot_token": "8608061868:AAHEEsZPOw8vq100WyyusF3QjTlBvTq9-Iw",
+    "telegram_chat_id": "7963634461",
+    "ports": "443,80,54321,8080,8443,2052,2053,2082,2083,2086,2087,2095,2096",
+    "masscan_rate": 1000,
+    "max_ips": 500,
+    "threads_per_target": 30,
+    "delay": 0.15,
+    "use_masscan": true,
+    "use_public_lists": true,
+    "send_realtime_updates": true
+}

